@@ -54,7 +54,7 @@ def read_playlist():
         if not tid or tid.startswith("no_epg"):
             continue
         title = line.rsplit(",", 1)[-1].strip() if "," in line else ""
-        days = int(a.get("catchup-days") or a.get("tvg-rec") or 1)
+        days = int(a.get("catchup-days") or a.get("tvg-rec") or 7)
         c = chans.setdefault(tid, {"days": 0, "names": set()})
         c["days"] = max(c["days"], days)
         if title:
