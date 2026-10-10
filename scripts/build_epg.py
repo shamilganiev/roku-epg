@@ -109,18 +109,21 @@ SEARCH_DAYS = int(os.environ.get("SEARCH_DAYS", "3"))
 
 
 def write_search_index(progs, now):
-    """search/dN.json: programmes that ENDED within day N back (N=1: last 24 h).
+    """search/dN.json: programmes that ENDED within day N back (N=1: last 24 h); search/next.json: starting within 24 h.
     Compact: titles stored once; p = flat [channel, title, start-offset-min, duration-min, ...].
     search/dN.json: передачи, ЗАКОНЧИВШИЕСЯ в N-е сутки назад (N=1 — последние 24 ч)."""
     os.makedirs(os.path.join(OUT, "search"), exist_ok=True)
-    for d in range(1, SEARCH_DAYS + 1):
-        # whole minutes so that start offsets are exact / целые минуты, чтобы смещения были точными
-        hi = (now // 60) * 60 - (d - 1) * 86400
-        lo = (now // 60) * 60 - d * 86400
+    base_now = (now // 60) * 60     # whole minutes so offsets are exact / целые минуты для точных смещений
+    # d1..dN: programmes that ENDED in that day back; "next": programmes STARTING in the next 24 h
+    # d1..dN: передачи, ЗАКОНЧИВШИЕСЯ в эти сутки назад; "next": НАЧИНАЮЩИЕСЯ в ближайшие 24 ч
+    windows = [(f"d{d}", base_now - d * 86400, base_now - (d - 1) * 86400, "end") for d in range(1, SEARCH_DAYS + 1)]
+    windows.append(("next", base_now, base_now + 86400, "start"))
+    for name, lo, hi, key in windows:
         chans, cidx, titles, tidx, flat = [], {}, [], {}, []
         for cid, lst in progs.items():
             for s0, e0, t in lst:
-                if lo < e0 <= hi and t:
+                v = e0 if key == "end" else s0
+                if lo < v <= hi and t:
                     if cid not in cidx:
                         cidx[cid] = len(chans); chans.append(cid)
                     if t not in tidx:
@@ -128,10 +131,10 @@ def write_search_index(progs, now):
                     flat += [cidx[cid], tidx[t], (s0 - lo) // 60, max(1, (e0 - s0) // 60)]
         doc = {"b": lo, "c": chans, "t": titles,
                "k": [norm(t) for t in titles], "l": [fuzz_translit(norm(t)) for t in titles], "p": flat}
-        path = os.path.join(OUT, "search", f"d{d}.json")
+        path = os.path.join(OUT, "search", f"{name}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
-        print(f"search d{d}: {len(flat)//4} programmes, {len(titles)} titles, {os.path.getsize(path)/1e6:.2f} MB")
+        print(f"search {name}: {len(flat)//4} programmes, {len(titles)} titles, {os.path.getsize(path)/1e6:.2f} MB")
 
 
 def main():
