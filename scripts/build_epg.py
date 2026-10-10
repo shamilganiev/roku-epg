@@ -114,8 +114,9 @@ def write_search_index(progs, now):
     search/dN.json: передачи, ЗАКОНЧИВШИЕСЯ в N-е сутки назад (N=1 — последние 24 ч)."""
     os.makedirs(os.path.join(OUT, "search"), exist_ok=True)
     for d in range(1, SEARCH_DAYS + 1):
-        hi = now - (d - 1) * 86400
-        lo = now - d * 86400
+        # whole minutes so that start offsets are exact / целые минуты, чтобы смещения были точными
+        hi = (now // 60) * 60 - (d - 1) * 86400
+        lo = (now // 60) * 60 - d * 86400
         chans, cidx, titles, tidx, flat = [], {}, [], {}, []
         for cid, lst in progs.items():
             for s0, e0, t in lst:
