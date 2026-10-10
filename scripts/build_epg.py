@@ -24,6 +24,40 @@ UA = {"User-Agent": "Mozilla/5.0 (EPG builder)"}
 ATTR = re.compile(r'([a-zA-Z0-9_-]+)="([^"]*)"')
 
 
+
+# ---- Search index helpers: MUST match source/textutil.brs in the Roku app ----
+# ---- Помощники поискового индекса: ДОЛЖНЫ совпадать с source/textutil.brs ----
+TL = {"а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ж":"zh","з":"z","и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p",
+      "р":"r","с":"s","т":"t","у":"u","ф":"f","х":"h","ц":"c","ч":"ch","ш":"sh","щ":"sch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya",
+      "і":"i","ї":"i","є":"e","ґ":"g","ў":"u","ә":"a","ө":"o","ү":"u","ғ":"g","ҡ":"k","ң":"n","ҙ":"z","ҫ":"s","һ":"h","җ":"zh"}
+
+def lower_u(s):
+    out = []
+    for ch in s:
+        c = ord(ch)
+        if 65 <= c <= 90: out.append(chr(c + 32))
+        elif c < 128: out.append(ch)
+        elif 0x410 <= c <= 0x42F: out.append(chr(c + 32))
+        elif 0x400 <= c <= 0x40F: out.append(chr(c + 80))
+        elif 0x460 <= c <= 0x52F and c % 2 == 0: out.append(chr(c + 1))
+        elif 0xC0 <= c <= 0xDE and c != 0xD7: out.append(chr(c + 32))
+        else: out.append(ch)
+    return "".join(out)
+
+def norm(s):
+    t = lower_u(s or "").replace("ё", "е")
+    while "  " in t: t = t.replace("  ", " ")
+    return t.strip()
+
+def fuzz_latin(t):
+    for a, b in (("kh","h"),("ts","c"),("j","y"),("w","v"),("x","ks"),("q","k"),("ie","e"),("ye","e")):
+        t = t.replace(a, b)
+    return t
+
+def fuzz_translit(n):
+    return fuzz_latin("".join(ch if ord(ch) < 128 else TL.get(ch, ch) for ch in n))
+
+
 def safe_name(tvg_id):
     # Must match safeEpgName() in the Roku app / Должно совпадать с safeEpgName() в Roku-приложении
     return re.sub(r"[^A-Za-z0-9_.-]", "_", tvg_id.lower())
@@ -69,6 +103,34 @@ def xmltv_time(v):
     fmt = "%Y%m%d%H%M%S %z" if len(v) > 14 else "%Y%m%d%H%M%S"
     dt = datetime.strptime(v if len(v) > 14 else v[:14], fmt)
     return int(dt.timestamp())
+
+
+SEARCH_DAYS = int(os.environ.get("SEARCH_DAYS", "3"))
+
+
+def write_search_index(progs, now):
+    """search/dN.json: programmes that ENDED within day N back (N=1: last 24 h).
+    Compact: titles stored once; p = flat [channel, title, start-offset-min, duration-min, ...].
+    search/dN.json: передачи, ЗАКОНЧИВШИЕСЯ в N-е сутки назад (N=1 — последние 24 ч)."""
+    os.makedirs(os.path.join(OUT, "search"), exist_ok=True)
+    for d in range(1, SEARCH_DAYS + 1):
+        hi = now - (d - 1) * 86400
+        lo = now - d * 86400
+        chans, cidx, titles, tidx, flat = [], {}, [], {}, []
+        for cid, lst in progs.items():
+            for s0, e0, t in lst:
+                if lo < e0 <= hi and t:
+                    if cid not in cidx:
+                        cidx[cid] = len(chans); chans.append(cid)
+                    if t not in tidx:
+                        tidx[t] = len(titles); titles.append(t)
+                    flat += [cidx[cid], tidx[t], (s0 - lo) // 60, max(1, (e0 - s0) // 60)]
+        doc = {"b": lo, "c": chans, "t": titles,
+               "k": [norm(t) for t in titles], "l": [fuzz_translit(norm(t)) for t in titles], "p": flat}
+        path = os.path.join(OUT, "search", f"d{d}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False, separators=(",", ":"))
+        print(f"search d{d}: {len(flat)//4} programmes, {len(titles)} titles, {os.path.getsize(path)/1e6:.2f} MB")
 
 
 def main():
@@ -131,6 +193,7 @@ def main():
         near = [p for p in lst if p[1] >= now and p[0] <= now + NOW_AFTER]
         if near:
             now_map[k] = near
+    write_search_index(progs, now)
     with open(os.path.join(OUT, "now.json"), "w", encoding="utf-8") as f:
         json.dump(now_map, f, ensure_ascii=False, separators=(",", ":"))
     with open(os.path.join(OUT, "meta.json"), "w") as f:
